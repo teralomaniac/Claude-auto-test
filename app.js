@@ -3,6 +3,7 @@ let Config = {
     api_rProxy: '',             //（可选）填入api镜像地址，留空则使用官网
     count: 0,                   //发送次数，0为不停止
     genPrompt: 0,               //生成提示词，0为关闭，正整数为每请求几次中生成一次提示词
+    max_prompts: 0,             //最大提示词数，超出后随机删除至指定数值，0为关闭
     max_tokens: 4000,           //最大响应长度
     model: 'claude-2.1',        //模型名
     interval: [100,300],        //时间间隔，填入随机范围，例如[100,300]为100到300秒随机
@@ -19,12 +20,20 @@ const getPrompt = path => {
         console.error('Read Error: ', err);
         process.exit();
     }
-    prompts = data.split(/\n+/g);
-    return prompts[Math.floor(Math.random() * prompts.length)].trim().replace(/(\r\n|\r|\\n)/gm, '\n');
-}, writePrompts = (path, prompts) => {
-    fs.appendFile(path, prompts, err => {
+    prompts = [...new Set(data.split(/\s*?(\n|\r)\s*/g).filter(item => !/^\s*$/.test(item)))];
+    Config.max_prompts > 0 && writePrompts(path, randomArray(prompts, Math.min(Config.max_prompts, prompts.length)).join('\n'), true);
+    return prompts[Math.floor(Math.random() * prompts.length)].replace(/\\n/gm, '\n');
+}, writePrompts = (path, prompts, write = false) => {
+    (write ? fs.writeFile : fs.appendFile)(path, prompts, err => {
         err && console.error(err);
     });
+}, randomArray = (arr, num) => {
+    if (num >= arr.length) return arr;
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr.slice(0, num);
 }, randomInterval = () => {
     const [min, max] = Config.interval;
     return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -54,7 +63,7 @@ const getPrompt = path => {
         }).then(response => response.json())
             .then(result => {
                 console.log(`Res:${result.completion || JSON.stringify(result)}\n`);
-                genPrompt && writePrompts('prompts.txt', result.completion.replace(/^ *\d+\. */gm,''));
+                genPrompt && writePrompts('prompts.txt', result.completion.replace(/^ *(\d+\.|-)? *| *$/gm,''));
             })
             .catch(err => console.error('Req Error: ', err));
         await new Promise(resolve => setTimeout(resolve, randomInterval()*1000));
