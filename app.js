@@ -12,7 +12,7 @@ let Config = {
 
 const fs = require('fs');
 
-const getPrompt = path => {
+const getPrompt = (path, write = true) => {
     let data, prompts;
     try {
         data = fs.readFileSync(path, 'utf8');
@@ -21,7 +21,7 @@ const getPrompt = path => {
         process.exit();
     }
     prompts = [...new Set(data.split(/\s*?(\n|\r)\s*/g).filter(item => !/^\s*$/.test(item)))];
-    Config.max_prompts > 0 && writePrompts(path, randomArray(prompts, Math.min(Config.max_prompts, prompts.length)).join('\n'), true);
+    write && Config.max_prompts > 0 && prompts.length && writePrompts(path, randomArray(prompts, Math.min(Config.max_prompts, prompts.length)).join('\n'), true);
     return prompts[Math.floor(Math.random() * prompts.length)].replace(/\\n/gm, '\n');
 }, writePrompts = (path, prompts, write = false) => {
     (write ? fs.writeFile : fs.appendFile)(path, prompts, err => {
@@ -42,30 +42,32 @@ const getPrompt = path => {
 !async function() {
     Config.apiKey = [...new Set([Config.apiKey].join('').match(/sk-ant-api\d\d-[\w-]{86}-[\w-]{6}AA/g))];
     for (let i = 0; i < Config.count || Config.count === 0; i++) {
-        const genPrompt = Config.genPrompt && ((i + 1) % Config.genPrompt === 0);
-        const prompt = getPrompt(genPrompt ? 'genprompts.txt' : 'prompts.txt');
-        console.log(`Count: ${i + 1}${genPrompt ? ' (gen)' : ''}\nReq: ${prompt}`);
-        await fetch(`${Config.api_rProxy ? Config.api_rProxy : 'https://api.anthropic.com'}/v1/complete`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': Config.apiKey[Math.floor(Math.random() * Config.apiKey.length)],
-                'anthropic-version': '2023-06-01'
-            },
-            body: JSON.stringify({
-                model: Config.model,
-                max_tokens_to_sample: Config.max_tokens,
-                temperature: Config.temperature,
-                prompt: prompt
-                    .replace(/(?:^.*?)(\n\nHuman:|)/s, function(match, p1) {return !match.includes('\n\nAssistant:') && p1 != '' ? match : '\n\nHuman: ' + match})
-                    .replace(/(\n\nAssistant:|)(?:.*?$)/s, function(match, p1) {return !match.includes('\n\nHuman:') && p1 != '' ? match :  match + '\n\nAssistant: '})
-            }),
-        }).then(response => response.json())
-            .then(result => {
-                console.log(`Res:${result.completion || JSON.stringify(result)}\n`);
-                genPrompt && writePrompts('prompts.txt', result.completion.replace(/^ *(\d+\.|-)? *| *$/gm,''));
-            })
-            .catch(err => console.error('Req Error: ', err));
-        await new Promise(resolve => setTimeout(resolve, randomInterval()*1000));
+        try {
+            const genPrompt = Config.genPrompt && ((i + 1) % Config.genPrompt === 0);
+            const prompt = getPrompt(genPrompt ? 'genprompts.txt' : 'prompts.txt', !genPrompt);
+            console.log(`Count: ${i + 1}${genPrompt ? ' (gen)' : ''}\nReq: ${prompt}`);
+            await fetch(`${Config.api_rProxy ? Config.api_rProxy : 'https://api.anthropic.com'}/v1/complete`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': Config.apiKey[Math.floor(Math.random() * Config.apiKey.length)],
+                    'anthropic-version': '2023-06-01'
+                },
+                body: JSON.stringify({
+                    model: Config.model,
+                    max_tokens_to_sample: Config.max_tokens,
+                    temperature: Config.temperature,
+                    prompt: prompt
+                        .replace(/(?:^.*?)(\n\nHuman:|)/s, function(match, p1) {return !match.includes('\n\nAssistant:') && p1 != '' ? match : '\n\nHuman: ' + match})
+                        .replace(/(\n\nAssistant:|)(?:.*?$)/s, function(match, p1) {return !match.includes('\n\nHuman:') && p1 != '' ? match :  match + '\n\nAssistant: '})
+                }),
+            }).then(response => response.json())
+                .then(result => {
+                    console.log(`Res:${result.completion || JSON.stringify(result)}\n`);
+                    genPrompt && writePrompts('prompts.txt', '\n' + result.completion.replace(/^ *(\d+\.|-)? *| *$/gm,''));
+                })
+                .catch(err => console.error('Req Error: ', err));
+            await new Promise(resolve => setTimeout(resolve, randomInterval()*1000));
+        } catch (err) {}
     }
 }();
