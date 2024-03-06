@@ -21,17 +21,15 @@ const getPrompt = (path, write = true) => {
         process.exit();
     }
     prompts = [...new Set(data.split(/\s*?(\n|\r)\s*/g).filter(item => !/^\s*$/.test(item)))];
-    write && Config.max_prompts > 0 && prompts.length && writePrompts(path, randomArray(prompts, Math.min(Config.max_prompts, prompts.length)).join('\n'), true);
+    write && Config.max_prompts > 0 && prompts.length && writePrompts(path, randomArray(prompts, Config.max_prompts).join('\n'), true);
     return prompts[Math.floor(Math.random() * prompts.length)].replace(/\\n/gm, '\n');
 }, writePrompts = (path, prompts, write = false) => {
-    (write ? fs.writeFile : fs.appendFile)(path, prompts, err => {
-        err && console.error(err);
-    });
+    return prompts && (write ? fs.writeFile : fs.appendFile)(path, prompts, err => { err && console.error(err) });
 }, randomArray = (arr, num) => {
     if (num >= arr.length) return arr;
     for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [arr[i], arr[j]] = [arr[j], arr[i]];
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
     }
     return arr.slice(0, num);
 }, randomInterval = () => {
@@ -43,31 +41,44 @@ const getPrompt = (path, write = true) => {
     Config.apiKey = [...new Set([Config.apiKey].join('').match(/sk-ant-api\d\d-[\w-]{86}-[\w-]{6}AA/g))];
     for (let i = 0; i < Config.count || Config.count === 0; i++) {
         try {
-            const genPrompt = Config.genPrompt && ((i + 1) % Config.genPrompt === 0);
-            const prompt = getPrompt(genPrompt ? 'genprompts.txt' : 'prompts.txt', !genPrompt);
-            console.log(`Count: ${i + 1}${genPrompt ? ' (gen)' : ''}\nReq: ${prompt}`);
-            await fetch(`${Config.api_rProxy ? Config.api_rProxy : 'https://api.anthropic.com'}/v1/complete`, {
+            const genPrompt = Config.genPrompt && ((i + 1) % Config.genPrompt === 0), messagesAPI = /claude-[3-9]/.test(Config.model);
+            let prompt = getPrompt(genPrompt ? 'genprompts.txt' : 'prompts.txt', !genPrompt), messages, system;
+            const index = Math.floor(Math.random() * Config.apiKey.length);
+            prompt = prompt.replace(/(\n\nHuman:(?!.*?\n\nAssistant:).*?|(?<!\n\nAssistant:.*?))$/s, '$&\n\nAssistant:').replace(/^.*?(?<!\n\nHuman:.*?)\n\nAssistant:/s, '\n\nHuman: $&');
+            if (messagesAPI) {
+                const rounds = prompt.replace(/\n\nAssistant: *$/, '').split('\n\nHuman:');
+                messages = rounds.slice(1).flatMap(round => {
+                    const turns = round.split('\n\nAssistant:');
+                    return [{role: 'user', content: turns[0].trim().replace(/^$/,' ')}].concat(turns.slice(1).flatMap(turn => [{role: 'assistant', content: turn.trim().replace(/^$/,' ')}]))
+                }), system = rounds[0].trim();
+            }
+            console.log(`Count: ${i + 1} | Model: ${Config.model}${Config.apiKey.length > 1 ? ' | Index: ' + index : ''}${genPrompt ? ' (gen)' : ''}\nReq: `, messagesAPI ? {...system && {system}, messages} : prompt.replace(/\n/g,'\\n'));
+            await fetch(`${Config.api_rProxy ? Config.api_rProxy : 'https://api.anthropic.com'}/v1/${messagesAPI ? 'messages' : 'complete'}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-api-key': Config.apiKey[Math.floor(Math.random() * Config.apiKey.length)],
+                    'x-api-key': Config.apiKey[index],
                     'anthropic-version': '2023-06-01'
                 },
                 body: JSON.stringify({
+                    ...messagesAPI ? {
+                        max_tokens: Config.max_tokens,
+                        messages,
+                        ...system && {system}
+                    } : {
+                        max_tokens_to_sample: Config.max_tokens,
+                        prompt
+                    },
                     model: Config.model,
-                    max_tokens_to_sample: Config.max_tokens,
-                    temperature: Config.temperature,
-                    prompt: prompt
-                        .replace(/(?:^.*?)(\n\nHuman:|)/s, function(match, p1) {return !match.includes('\n\nAssistant:') && p1 != '' ? match : '\n\nHuman: ' + match})
-                        .replace(/(\n\nAssistant:|)(?:.*?$)/s, function(match, p1) {return !match.includes('\n\nHuman:') && p1 != '' ? match :  match + '\n\nAssistant: '})
+                    temperature: Config.temperature
                 }),
             }).then(response => response.json())
                 .then(result => {
-                    console.log(`Res:${result.completion || JSON.stringify(result)}\n`);
-                    genPrompt && writePrompts('prompts.txt', '\n' + result.completion.replace(/^ *(\d+\.|-)? *| *$/gm,''));
+                    console.log(`Res: ${result.completion || result.content?.[0].text || JSON.stringify(result)}\n`);
+                    genPrompt && writePrompts('prompts.txt', '\n' + (result.completion || result.content?.[0].text  || '').replace(/^ *(\d+\.|-)? *| *$/gm,''));
                 })
                 .catch(err => console.error('Req Error: ', err));
             await new Promise(resolve => setTimeout(resolve, randomInterval()*1000));
-        } catch (err) {}
+        } catch (err) { console.error('Error: ', err) }
     }
 }();
